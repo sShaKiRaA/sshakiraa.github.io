@@ -3,3 +3,12 @@
 .memory-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#edf1e7;border:1px solid #e0e7d8;border-radius:8px;padding:14px 16px;margin:0 0 20px}.memory-bar strong{font-size:12px;color:var(--green)}.memory-bar #saveStatus{font-size:10px;color:#74836b;display:block;margin-top:5px}.memory-actions{margin-left:auto;display:flex;gap:8px}.memory-bar>small{width:100%;font-size:10px;color:#839076;line-height:1.8}.memory-actions .outline{background:#ffffff88}@media(max-width:650px){.memory-bar{padding:12px}.memory-actions{gap:4px}.memory-actions .outline{padding:8px}}
 
 #authGate{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px}.locked #authGate{display:flex}.locked>aside,.locked>main{display:none}.auth-card{max-width:450px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:36px;box-shadow:0 12px 60px #285d490b}.auth-card .brand{font-size:28px;font-weight:600;margin-bottom:28px}.auth-card h1{font-size:24px}.auth-card label{display:block;margin-top:18px}.auth-card .full-button{margin-top:14px}.auth-card #authMessage{color:#966349;white-space:pre-line}.memory-bar #saveStatus{max-width:600px}.memory-actions{flex-wrap:wrap}#loadCloud{display:none;background:#fff0de}button:disabled{cursor:wait;opacity:.5}.stats h2{white-space:nowrap;font-size:clamp(17px,2.3vw,31px)}
+
+/* Soft pink canvas with overlapping butter-yellow light. */
+:root{--bg:#f6e7ec;--line:#ece3e3}
+html{min-height:100%;background:#f6e7ec}
+body{min-height:100vh;background-color:#f6e7ec;background-image:radial-gradient(ellipse at 10% 14%,rgba(255,246,211,.86) 0%,rgba(255,246,211,.38) 30%,rgba(255,246,211,0) 60%),radial-gradient(ellipse at 88% 72%,rgba(255,244,212,.65) 0%,rgba(255,244,212,0) 55%),linear-gradient(140deg,#f8eaf0 0%,#f1dfe6 58%,#f8eaf0 100%);background-attachment:fixed;background-repeat:no-repeat}
+aside{background:rgba(253,244,245,.88);backdrop-filter:blur(14px)}
+.panel,.stats article,.auth-card{background:rgba(255,253,250,.94)}
+.stats .balance{background:rgba(255,245,217,.9);border-color:#eee2ca}
+.memory-bar{background:rgba(255,247,224,.7);border-color:#ebdfd3}
