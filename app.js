@@ -3,7 +3,7 @@ const day=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth
 let data={words:[],goal:30,history:{}},pending=null,session=null;
 try{const raw=localStorage.getItem(KEY);if(raw)data=validate(JSON.parse(raw))}catch(e){alert('本地数据无法读取。请到设置导入备份；本次更改可能覆盖旧数据。')}
 function validate(v){if(!v||!Array.isArray(v.words)||!Number.isInteger(v.goal)||v.goal<1||v.goal>200||!v.history||typeof v.history!=='object'||Array.isArray(v.history))throw Error('备份格式不正确');if(v.articles!==undefined&&(!Array.isArray(v.articles)||v.articles.some(a=>!a||typeof a.id!=='string'||typeof a.title!=='string'||typeof a.text!=='string'||typeof a.url!=='string'||(a.translation!==undefined&&typeof a.translation!=='string')||!Number.isFinite(a.createdAt))))throw Error('文章备份格式不正确');if(v.annotations!==undefined&&(!Array.isArray(v.annotations)||v.annotations.some(m=>!m||typeof m.id!=='string'||typeof m.articleId!=='string'||typeof m.text!=='string'||typeof m.note!=='string'||!['word','sentence','question'].includes(m.kind)||!Number.isInteger(m.start)||!Number.isInteger(m.end)||m.start<0||m.end<=m.start||!Number.isFinite(m.createdAt))))throw Error('标注备份格式不正确');const seen=new Set();v.words.forEach(w=>{if(!w||typeof w.word!=='string'||! /^[a-z]+(?:[ '-][a-z]+)*$/i.test(w.word)||seen.has(w.word.toLowerCase())||typeof w.definition!=='string'||typeof w.example!=='string'||typeof w.phonetic!=='string'||typeof w.audio!=='string'||!Number.isInteger(w.level)||w.level<0||w.level>5||!Number.isFinite(w.due))throw Error('单词数据格式不正确');if(w.contexts!==undefined&&(!Array.isArray(w.contexts)||w.contexts.some(c=>!c||typeof c.text!=='string'||typeof c.title!=='string'||typeof c.articleId!=='string')))throw Error('原文语境格式不正确');seen.add(w.word.toLowerCase())});Object.entries(v.history).forEach(([k,ids])=>{if(!/^\d{4}-\d{2}-\d{2}$/.test(k)||!Array.isArray(ids)||ids.some(x=>typeof x!=='string'))throw Error('学习记录格式不正确')});return v}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(data));return true}catch(e){alert('保存失败：浏览器存储不可用或空间不足，请导出备份。');return false}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(data));queueLocalBackup();return true}catch(e){alert('保存失败：浏览器存储不可用或空间不足，请导出备份。');return false}}
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const completed=()=>data.history[day()]||[];
 function eligible(){return data.words.filter(w=>w.due<=Date.now()&&!completed().includes(w.word)).sort((a,b)=>a.due-b.due)}
@@ -31,3 +31,105 @@ $('#saveSettings').onclick=()=>{const v=Number($('#goal').value);if(!Number.isIn
 $('#export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='word-garden-'+day()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 $('#import').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(file.size>10000000)throw Error('备份文件过大');const restored=validate(JSON.parse(await file.text()));if(!confirm(`用备份中的 ${restored.words.length} 个单词替换当前数据？建议先导出当前备份。`))return;data=restored;session=null;if(save())$('#backupStatus').textContent='备份已导入。';render()}catch(err){$('#backupStatus').textContent='导入失败：'+err.message}finally{e.target.value=''}};
 window.addEventListener('focus',()=>{render();if(!$('#review').hidden&&!session)reviewStart()});render();
+
+$('#backupStatus').insertAdjacentHTML('afterend', `
+  <div class="word-actions">
+    <button id="chooseBackupFolder">选择本地备份文件夹</button>
+    <button id="backupNow" hidden>立即备份</button>
+    <button id="disableBackup" hidden>关闭自动备份</button>
+  </div>
+  <p id="localBackupStatus" class="muted" role="status">可在电脑的 Chrome 中设置本地自动备份。</p>`);
+
+let backupFolder = null;
+let backupQueue = Promise.resolve();
+const backupPermission = {mode: 'readwrite'};
+const backupStatus = message => { $('#localBackupStatus').textContent = message; };
+
+async function backupSetting(mode, action) {
+  const db = await new Promise((resolve, reject) => {
+    const request = indexedDB.open('word-garden-backup', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('settings');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('settings', mode);
+      const request = action(tx.objectStore('settings'));
+      tx.oncomplete = () => resolve(request.result);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function showBackupButtons() {
+  $('#backupNow').hidden = !backupFolder;
+  $('#disableBackup').hidden = !backupFolder;
+}
+
+function queueLocalBackup() {
+  if (!backupFolder) return;
+  if (!data.words.length && !data.articles?.length && !data.annotations?.length && !Object.keys(data.history).length) {
+    backupStatus('当前没有学习记录。有记录后会自动备份。');
+    return;
+  }
+  const folder = backupFolder;
+  const snapshot = JSON.stringify(data, null, 2);
+  backupQueue = backupQueue.then(async () => {
+    if (folder !== backupFolder) return;
+    if (await folder.queryPermission(backupPermission) !== 'granted') {
+      backupStatus('请点“立即备份”，重新授权文件夹写入。');
+      return;
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const file = await folder.getFileHandle(`word-garden-${stamp}-${crypto.randomUUID()}.json`, {create: true});
+    const stream = await file.createWritable();
+    await stream.write(snapshot);
+    await stream.close();
+    if (folder === backupFolder) backupStatus(`已备份到“${folder.name}” · ${new Date().toLocaleString('zh-CN')}`);
+  }).catch(() => backupStatus('写入本地备份失败，请重新选择文件夹，或手动导出。'));
+  return backupQueue;
+}
+
+if (typeof window.showDirectoryPicker === 'function') {
+  backupSetting('readonly', store => store.get('folder')).then(folder => {
+    if (!folder || backupFolder) return;
+    backupFolder = folder;
+    showBackupButtons();
+    backupStatus(`已选择“${folder.name}”。保存记录时会写入备份，若提示权限，请点“立即备份”。`);
+  }).catch(() => backupStatus('无法读取备份设置，请重新选择文件夹。'));
+  $('#chooseBackupFolder').onclick = async () => {
+    try {
+      const folder = await window.showDirectoryPicker({mode: 'readwrite', id: 'word-garden-backup'});
+      await backupSetting('readwrite', store => store.put(folder, 'folder'));
+      backupFolder = folder;
+      showBackupButtons();
+      await queueLocalBackup();
+    } catch (error) {
+      if (error.name !== 'AbortError') backupStatus('无法设置本地备份，请用 Chrome 打开正式网址后重试。');
+    }
+  };
+  $('#backupNow').onclick = async () => {
+    try {
+      if (await backupFolder?.requestPermission(backupPermission) === 'granted') await queueLocalBackup();
+      else backupStatus('请授权备份文件夹的写入权限。');
+    } catch {
+      backupStatus('无法获得写入权限，请重新选择文件夹。');
+    }
+  };
+  $('#disableBackup').onclick = async () => {
+    try {
+      await backupSetting('readwrite', store => store.delete('folder'));
+      backupFolder = null;
+      showBackupButtons();
+      backupStatus('自动备份已关闭。已生成的文件可在原文件夹中找到。');
+    } catch {
+      backupStatus('无法关闭自动备份，请重试。');
+    }
+  };
+} else {
+  $('#chooseBackupFolder').disabled = true;
+  backupStatus('此浏览器可使用“导出单词与进度”手动保存备份。自动备份请用电脑上的 Chrome。');
+}
