@@ -1,3 +1,4 @@
+let recoveringPassword=new URLSearchParams(location.hash.slice(1)).get('type')==='recovery';
 /* Cloud sync uses a compare-and-swap revision. Pending edits remain local on conflict. */
 const cloud=supabase.createClient('https://gijdhbtxroyychxjmawo.supabase.co','sb_publishable_1N4lUSWaEWPXXYFiElGRcw_6Hp63QaZ',{auth:{storageKey:'family-ledger-auth',persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
 let ledgerOwner=null, account=null,revision=0,dirty=false,busy=false,ready=false,conflict=false,changes=0,timer=null,epoch=0;
@@ -15,8 +16,8 @@ $('#signupButton').onclick=async()=>{if(!$('#authForm').reportValidity())return;
 $('#syncNow').onclick=synchronize;
 $('#loadCloud').onclick=async()=>{if(!conflict||busy||!account)return;if(!confirm('另一设备已经更新账本。本操作会先下载当前本机账本的完整备份，再加载云端版本。本机未同步修改不会自动合并，可从备份中核对补录。继续？'))return;busy=true;try{downloadBackup(state,'冲突本机备份');const {data,error}=await cloud.from('family_ledger').select('data,revision').eq('user_id',ledgerOwner).single();if(error)throw error;const next=checkData(data.data);state=next;revision=Number(data.revision);dirty=false;conflict=false;cache();$('#loadCloud').style.display='none';render();status('已加载云端版本 · 本机修改已导出备份')}catch(e){status('处理失败：'+showError(e))}finally{busy=false}};
 $('#logout').onclick=async()=>{if(dirty&&!confirm('还有未同步修改，已保存在此浏览器，下次登录同一账号可继续同步。建议先完整备份。仍要退出？'))return;const {error}=await cloud.auth.signOut({scope:'local'});if(error){status('退出失败：'+showError(error));return}await openAccount(null)};
-cloud.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT')setTimeout(()=>openAccount(null),0);else if(event==='SIGNED_IN'&&!ready)setTimeout(()=>openAccount(session),0)});
-cloud.auth.getSession().then(({data,error})=>{if(error)$('#authMessage').textContent=showError(error);else openAccount(data.session)});
+cloud.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'){recoveringPassword=true;showPasswordRecovery();return}if(event==='SIGNED_OUT')setTimeout(()=>openAccount(null),0);else if(event==='SIGNED_IN'&&!ready&&!recoveringPassword)setTimeout(()=>openAccount(session),0)});
+cloud.auth.getSession().then(({data,error})=>{if(error)$('#authMessage').textContent=showError(error);else if(!recoveringPassword)openAccount(data.session);else if(!data.session)$('#authMessage').textContent='重置链接已失效，请重新申请。'});
 setInterval(()=>{if(document.visibilityState==='visible')synchronize()},12000);window.addEventListener('online',synchronize);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')synchronize()});window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
 
 $('#familyShare').onclick=async()=>{
@@ -34,4 +35,39 @@ $('#familyShare').onclick=async()=>{
   if(action==='1')alert('邀请已设置。请让家人登录自己的账号，在家庭共享中接受邀请并输入你的邮箱。');
   else location.reload();
  }catch(error){alert(showError(error))}finally{busy=false}
+};
+
+function showPasswordRecovery(){
+ document.body.classList.add('locked');
+ $('#authForm').hidden=true;
+ $('#recoveryForm').hidden=false;
+ $('#authMessage').textContent='请输入至少 8 个字符的新密码。';
+}
+$('#forgotPassword').onclick=async event=>{
+ const field=$('#authEmail');
+ if(!field.reportValidity())return;
+ const button=event.currentTarget;
+ button.disabled=true;
+ try{
+  const {error}=await cloud.auth.resetPasswordForEmail(field.value.trim());
+  if(error)throw error;
+  $('#authMessage').textContent='如果该邮箱已注册且可以接收邮件，请查收密码重置邮件。';
+ }catch(error){$('#authMessage').textContent='无法请求密码重置：'+showError(error)}
+ finally{button.disabled=false}
+};
+$('#recoveryForm').onsubmit=async event=>{
+ event.preventDefault();
+ const button=event.submitter;
+ button.disabled=true;
+ try{
+  const {data,error}=await cloud.auth.updateUser({password:$('#newPassword').value});
+  if(error)throw error;
+  $('#recoveryForm').reset();
+  $('#recoveryForm').hidden=true;
+  $('#authForm').hidden=false;
+  recoveringPassword=false;
+  await openAccount({user:data.user});
+  $('#authMessage').textContent='密码已更新。';
+ }catch(error){$('#authMessage').textContent='无法更新密码：'+showError(error)}
+ finally{button.disabled=false}
 };
